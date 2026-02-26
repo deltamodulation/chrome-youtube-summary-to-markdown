@@ -12,7 +12,7 @@ YouTube動画の字幕（文字起こし）を取得し、動画メタデータ�
 
 ## 出力例
 
-```markdown
+````markdown
 # 動画情報
 - タイトル: Example Video Title
 - チャンネル: Example Channel
@@ -29,7 +29,7 @@ Video description here
 **[00:00]** Hello and welcome...
 
 **[00:15]** Today we'll be discussing...
-```
+````
 
 ## インストール方法
 
