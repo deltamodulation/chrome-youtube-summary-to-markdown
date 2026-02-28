@@ -87,12 +87,22 @@ async function injectedGetTranscriptInfo() {
     }
   } catch (e) { /* ignore */ }
 
-  // --- 字幕パネルを開く ---
+  // --- 字幕パネルを開く（SPA遷移対策: 前の動画のパネルが残っている場合は閉じて開き直す） ---
   let panel = document.querySelector(PANEL_SELECTOR);
   const isOpen = panel &&
     panel.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED';
 
-  if (!isOpen) {
+  if (isOpen) {
+    // パネルが開いているが、前の動画のものかもしれない
+    // 一度閉じて開き直すことで確実に現在の動画の字幕を取得する
+    const closeBtn = panel.querySelector('#visibility-button button, button[aria-label="閉じる"], button[aria-label="Close"]');
+    if (closeBtn) {
+      closeBtn.click();
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+
+  {
     const ariaLabels = [
       '文字起こしを表示', 'Show transcript',
       'Transkript anzeigen', 'Afficher la transcription', 'Mostrar transcripción',

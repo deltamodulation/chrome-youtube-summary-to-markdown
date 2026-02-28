@@ -55,15 +55,19 @@
    * 字幕パネルを開く（複数のボタンセレクタをフォールバック）
    */
   async function openTranscriptPanel() {
-    // 既に開いているか
+    // SPA遷移対策: パネルが開いていても前の動画のものかもしれないので閉じて開き直す
     const panel = document.querySelector(PANEL_SELECTOR);
     if (
       panel &&
       panel.getAttribute('visibility') ===
         'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED'
     ) {
-      log('Transcript panel already open');
-      return true;
+      log('Transcript panel open — closing to refresh for current video');
+      const closeBtn = panel.querySelector('#visibility-button button, button[aria-label="閉じる"], button[aria-label="Close"]');
+      if (closeBtn) {
+        closeBtn.click();
+        await new Promise((r) => setTimeout(r, 500));
+      }
     }
 
     // 「文字起こしを表示」ボタンを探す（複数パターン）
