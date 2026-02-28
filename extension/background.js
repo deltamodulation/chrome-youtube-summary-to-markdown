@@ -45,7 +45,9 @@ async function injectedGetTranscriptInfo() {
     expandBtn.click();
     await new Promise(r => setTimeout(r, 500));
   }
-  const descEl = document.querySelector('ytd-text-inline-expander #attributed-snippet-text');
+  // 展開後の全文は #expanded 内の yt-attributed-string に格納される
+  const descEl = document.querySelector('ytd-text-inline-expander #expanded yt-attributed-string')
+    || document.querySelector('ytd-text-inline-expander #attributed-snippet-text');
   const description = descEl ? descEl.textContent.trim() : '';
 
   // --- 元言語の検出 ---
