@@ -39,6 +39,12 @@ async function injectedGetTranscriptInfo() {
   const dateEl = document.querySelector('#info-strings yt-formatted-string');
   const publishDate = dateEl ? dateEl.textContent.trim() : '';
 
+  // 説明欄を展開してから全文を取得する
+  const expandBtn = document.querySelector('tp-yt-paper-button#expand, ytd-text-inline-expander #expand');
+  if (expandBtn) {
+    expandBtn.click();
+    await new Promise(r => setTimeout(r, 500));
+  }
   const descEl = document.querySelector('ytd-text-inline-expander #attributed-snippet-text');
   const description = descEl ? descEl.textContent.trim() : '';
 
