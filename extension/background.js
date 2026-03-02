@@ -48,7 +48,25 @@ async function injectedGetTranscriptInfo() {
   // 展開後の全文は #expanded 内の yt-attributed-string に格納される
   const descEl = document.querySelector('ytd-text-inline-expander #expanded yt-attributed-string')
     || document.querySelector('ytd-text-inline-expander #attributed-snippet-text');
-  const description = descEl ? descEl.textContent.trim() : '';
+  // textContent だとリンクが短縮表示のままになるため、
+  // <a> タグの表示テキストを href の完全URLで置換して取得する
+  let description = '';
+  if (descEl) {
+    const clone = descEl.cloneNode(true);
+    clone.querySelectorAll('a').forEach(a => {
+      const href = a.getAttribute('href') || '';
+      // YouTube のリダイレクトURL (/redirect?q=...) から実際のURLを抽出
+      let url = href;
+      try {
+        const u = new URL(href, window.location.origin);
+        if (u.pathname === '/redirect' && u.searchParams.has('q')) {
+          url = u.searchParams.get('q');
+        }
+      } catch (e) { /* そのまま使う */ }
+      a.textContent = url;
+    });
+    description = clone.textContent.trim();
+  }
 
   // --- 元言語の検出 ---
   // 優先順位:
