@@ -76,12 +76,19 @@
         channel: info.channel,
         publishDate: info.publishDate,
         description: info.description,
+        isModern: info.isModern,
       };
 
       const { languages, originalLangIndex } = info;
 
-      if (!languages || languages.length === 0) {
-        showStatus('言語情報を取得できませんでした', 'error');
+      if (info.isModern || !languages || languages.length === 0) {
+        // 新パネルには言語ドロップダウンがないため、言語選択をスキップして直接取得
+        if (!info.isModern && info.segmentCount === 0) {
+          showStatus('言語情報を取得できませんでした', 'error');
+          return;
+        }
+        trackSelectorEl.classList.add('hidden');
+        await fetchTranscript();
         return;
       }
 
@@ -113,7 +120,8 @@
    * 選択した言語の字幕を取得
    */
   async function fetchTranscript() {
-    const languageIndex = parseInt(languageSelectEl.value, 10);
+    const rawVal = languageSelectEl.value;
+    const languageIndex = rawVal !== '' ? parseInt(rawVal, 10) : null;
 
     showStatus('字幕を取得中...');
     fetchBtn.disabled = true;
