@@ -5,11 +5,34 @@
 (() => {
   'use strict';
 
-  const PANEL_SELECTOR =
+  // 新旧パネル対応セレクタ
+  const OLD_PANEL_SELECTOR =
     'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]';
-  const SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
+  const NEW_PANEL_SELECTOR =
+    'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]';
+  const OLD_SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
+  const NEW_SEGMENT_SELECTOR = 'transcript-segment-view-model';
   const DROPDOWN_SELECTOR = 'yt-dropdown-menu';
   const OPTION_SELECTOR = 'tp-yt-paper-item[role="option"]';
+
+  // 新旧どちらのパネルが開いているか判定
+  function detectPanel() {
+    const newPanel = document.querySelector(NEW_PANEL_SELECTOR);
+    if (newPanel && newPanel.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
+      return { panel: newPanel, isModern: true };
+    }
+    const oldPanel = document.querySelector(OLD_PANEL_SELECTOR);
+    if (oldPanel && oldPanel.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
+      return { panel: oldPanel, isModern: false };
+    }
+    if (newPanel) return { panel: newPanel, isModern: true };
+    if (oldPanel) return { panel: oldPanel, isModern: false };
+    return { panel: null, isModern: false };
+  }
+
+  function getSegmentSelector() {
+    return document.querySelector(NEW_SEGMENT_SELECTOR) ? NEW_SEGMENT_SELECTOR : OLD_SEGMENT_SELECTOR;
+  }
 
   const log = (...args) => console.log('[YT-Summary]', ...args);
 
@@ -55,18 +78,20 @@
    * 字幕パネルを開く（複数のボタンセレクタをフォールバック）
    */
   async function openTranscriptPanel() {
-    // SPA遷移対策: パネルが開いていても前の動画のものかもしれないので閉じて開き直す
-    const panel = document.querySelector(PANEL_SELECTOR);
-    if (
-      panel &&
-      panel.getAttribute('visibility') ===
-        'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED'
-    ) {
-      log('Transcript panel open — closing to refresh for current video');
-      const closeBtn = panel.querySelector('#visibility-button button, button[aria-label="閉じる"], button[aria-label="Close"]');
-      if (closeBtn) {
-        closeBtn.click();
-        await new Promise((r) => setTimeout(r, 500));
+    // SPA遷移対策: 新旧いずれかのパネルが開いていたら閉じて開き直す
+    for (const sel of [NEW_PANEL_SELECTOR, OLD_PANEL_SELECTOR]) {
+      const panel = document.querySelector(sel);
+      if (
+        panel &&
+        panel.getAttribute('visibility') ===
+          'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED'
+      ) {
+        log('Transcript panel open — closing to refresh for current video');
+        const closeBtn = panel.querySelector('#visibility-button button, button[aria-label="閉じる"], button[aria-label="Close"]');
+        if (closeBtn) {
+          closeBtn.click();
+          await new Promise((r) => setTimeout(r, 500));
+        }
       }
     }
 
@@ -116,9 +141,23 @@
       return false;
     }
 
-    // パネルが開くのを待つ
+    // パネルが開くのを待つ（新旧いずれかのセグメントが出現するまで）
     await new Promise((r) => setTimeout(r, 1500));
-    const found = await waitForElement(SEGMENT_SELECTOR, 5000);
+    const found = await new Promise((resolve) => {
+      if (document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)) {
+        resolve(true); return;
+      }
+      const observer = new MutationObserver(() => {
+        if (document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)) {
+          observer.disconnect(); resolve(true);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(!!(document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)));
+      }, 5000);
+    });
     log('Segments found after panel open:', found);
     return found;
   }
@@ -127,8 +166,8 @@
    * 字幕パネルから利用可能な言語一覧を取得
    */
   function getAvailableLanguages() {
-    const panel = document.querySelector(PANEL_SELECTOR);
-    if (!panel) return [];
+    const { panel, isModern } = detectPanel();
+    if (!panel || isModern) return []; // 新パネルにはドロップダウンがない
 
     const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
     if (!dropdown) return [];
@@ -154,8 +193,8 @@
    * 言語を切り替える
    */
   async function switchLanguage(index) {
-    const panel = document.querySelector(PANEL_SELECTOR);
-    if (!panel) return false;
+    const { panel, isModern } = detectPanel();
+    if (!panel || isModern) return false; // 新パネルでは言語切替不可
 
     const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
     if (!dropdown) return false;
@@ -165,7 +204,7 @@
 
     options[index].click();
     await new Promise((r) => setTimeout(r, 1500));
-    await waitForElement(SEGMENT_SELECTOR, 5000);
+    await waitForElement(getSegmentSelector(), 5000);
     return true;
   }
 
@@ -173,16 +212,26 @@
    * 字幕パネルからセグメントを読み取る
    */
   function scrapeSegments() {
-    const segments = document.querySelectorAll(SEGMENT_SELECTOR);
+    const { isModern } = detectPanel();
+    const segSelector = isModern ? NEW_SEGMENT_SELECTOR : OLD_SEGMENT_SELECTOR;
+    const segments = document.querySelectorAll(segSelector);
     const result = [];
 
     segments.forEach((seg) => {
-      const timeEl = seg.querySelector('.segment-timestamp');
-      const textEl = seg.querySelector('.segment-text');
-      if (!timeEl || !textEl) return;
-
-      const timeStr = timeEl.textContent.trim();
-      const text = textEl.textContent.trim().replace(/\n/g, ' ');
+      let timeStr, text;
+      if (isModern) {
+        const timeEl = seg.querySelector('.ytwTranscriptSegmentViewModelTimestamp');
+        const textEl = seg.querySelector('span.yt-core-attributed-string');
+        if (!timeEl || !textEl) return;
+        timeStr = timeEl.textContent.trim();
+        text = textEl.textContent.trim().replace(/\n/g, ' ');
+      } else {
+        const timeEl = seg.querySelector('.segment-timestamp');
+        const textEl = seg.querySelector('.segment-text');
+        if (!timeEl || !textEl) return;
+        timeStr = timeEl.textContent.trim();
+        text = textEl.textContent.trim().replace(/\n/g, ' ');
+      }
 
       const parts = timeStr.split(':').map(Number);
       let seconds = 0;

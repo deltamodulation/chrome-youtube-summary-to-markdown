@@ -8,9 +8,13 @@
  * タブ内で実行: 字幕パネルを開き、メタデータ・言語一覧を取得
  */
 async function injectedGetTranscriptInfo() {
-  const PANEL_SELECTOR =
+  // --- 新旧パネル対応セレクタ ---
+  const OLD_PANEL_SELECTOR =
     'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]';
-  const SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
+  const NEW_PANEL_SELECTOR =
+    'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]';
+  const OLD_SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
+  const NEW_SEGMENT_SELECTOR = 'transcript-segment-view-model';
   const DROPDOWN_SELECTOR = 'yt-dropdown-menu';
   const OPTION_SELECTOR = 'tp-yt-paper-item[role="option"]';
 
@@ -23,6 +27,41 @@ async function injectedGetTranscriptInfo() {
       observer.observe(document.body, { childList: true, subtree: true });
       setTimeout(() => { observer.disconnect(); resolve(!!document.querySelector(selector)); }, timeout);
     });
+  }
+
+  // 新旧いずれかのセグメントが出現するまで待つ
+  function waitForSegments(timeout = 5000) {
+    return new Promise((resolve) => {
+      if (document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)) {
+        resolve(true); return;
+      }
+      const observer = new MutationObserver(() => {
+        if (document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)) {
+          observer.disconnect(); resolve(true);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(!!(document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)));
+      }, timeout);
+    });
+  }
+
+  // どちらのパネルが使われているか判定
+  function detectPanel() {
+    const newPanel = document.querySelector(NEW_PANEL_SELECTOR);
+    if (newPanel && newPanel.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
+      return { panel: newPanel, isModern: true };
+    }
+    const oldPanel = document.querySelector(OLD_PANEL_SELECTOR);
+    if (oldPanel && oldPanel.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
+      return { panel: oldPanel, isModern: false };
+    }
+    // どちらも未展開の場合、存在するパネルを返す（ボタンクリック後に展開される）
+    if (newPanel) return { panel: newPanel, isModern: true };
+    if (oldPanel) return { panel: oldPanel, isModern: false };
+    return { panel: null, isModern: false };
   }
 
   // --- Video ID ---
@@ -69,30 +108,34 @@ async function injectedGetTranscriptInfo() {
   }
 
   // --- 元言語の検出 ---
-  // 優先順位:
-  //   1. defaultAudioLanguage に一致する手動字幕
-  //   2. defaultAudioLanguage に一致する字幕（自動生成含む）
-  //   3. 手動字幕の先頭
+  // movie_player.getPlayerResponse() はSPA遷移後も最新データを返す
+  // ytInitialPlayerResponse は初回ロード時の値が残る可能性があるためフォールバックとして使用
   let originalLangCode = null;
   let originalLangName = null;
   try {
-    if (typeof ytInitialPlayerResponse !== 'undefined' && ytInitialPlayerResponse) {
-      const vd = ytInitialPlayerResponse.videoDetails || {};
-      const mf = (ytInitialPlayerResponse.microformat || {}).playerMicroformatRenderer || {};
+    let playerResponse = null;
+    const player = document.querySelector('#movie_player');
+    if (player && player.getPlayerResponse) {
+      playerResponse = player.getPlayerResponse();
+    }
+    if (!playerResponse && typeof ytInitialPlayerResponse !== 'undefined') {
+      playerResponse = ytInitialPlayerResponse;
+    }
+    if (playerResponse) {
+      const vd = playerResponse.videoDetails || {};
+      const mf = (playerResponse.microformat || {}).playerMicroformatRenderer || {};
       const audioLang = vd.defaultAudioLanguage || mf.defaultAudioLanguage || null;
 
-      const caps = ytInitialPlayerResponse.captions;
+      const caps = playerResponse.captions;
       if (caps && caps.playerCaptionsTracklistRenderer) {
         const tracks = caps.playerCaptionsTracklistRenderer.captionTracks || [];
         const manualTracks = tracks.filter(t => t.kind !== 'asr');
         let chosen = null;
 
         if (audioLang) {
-          // audioLang に一致する手動字幕を探す（"en" は "en-US" 等にもマッチ）
           chosen = manualTracks.find(t =>
             t.languageCode === audioLang || t.languageCode.startsWith(audioLang.split('-')[0])
           );
-          // 手動がなければ自動生成でもOK
           if (!chosen) {
             chosen = tracks.find(t =>
               t.languageCode === audioLang || t.languageCode.startsWith(audioLang.split('-')[0])
@@ -100,7 +143,6 @@ async function injectedGetTranscriptInfo() {
           }
         }
 
-        // audioLang が不明の場合、手動字幕の先頭にフォールバック
         if (!chosen && manualTracks.length > 0) {
           chosen = manualTracks[0];
         }
@@ -114,17 +156,15 @@ async function injectedGetTranscriptInfo() {
   } catch (e) { /* ignore */ }
 
   // --- 字幕パネルを開く（SPA遷移対策: 前の動画のパネルが残っている場合は閉じて開き直す） ---
-  let panel = document.querySelector(PANEL_SELECTOR);
-  const isOpen = panel &&
-    panel.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED';
-
-  if (isOpen) {
-    // パネルが開いているが、前の動画のものかもしれない
-    // 一度閉じて開き直すことで確実に現在の動画の字幕を取得する
-    const closeBtn = panel.querySelector('#visibility-button button, button[aria-label="閉じる"], button[aria-label="Close"]');
-    if (closeBtn) {
-      closeBtn.click();
-      await new Promise(r => setTimeout(r, 500));
+  // 新旧いずれかの開いているパネルを閉じる
+  for (const sel of [NEW_PANEL_SELECTOR, OLD_PANEL_SELECTOR]) {
+    const p = document.querySelector(sel);
+    if (p && p.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
+      const closeBtn = p.querySelector('#visibility-button button, button[aria-label="閉じる"], button[aria-label="Close"]');
+      if (closeBtn) {
+        closeBtn.click();
+        await new Promise(r => setTimeout(r, 500));
+      }
     }
   }
 
@@ -151,14 +191,16 @@ async function injectedGetTranscriptInfo() {
     }
     if (!clicked) return { error: 'この動画には字幕パネルがありません' };
     await new Promise(r => setTimeout(r, 1500));
-    await waitForElement(SEGMENT_SELECTOR, 5000);
+    await waitForSegments(5000);
   }
 
-  // --- 言語一覧 ---
-  panel = document.querySelector(PANEL_SELECTOR);
+  // --- パネル種別を判定 ---
+  const { panel, isModern } = detectPanel();
+
+  // --- 言語一覧（旧パネルのみ。新パネルにはドロップダウンがない） ---
   const languages = [];
   let currentLangName = '';
-  if (panel) {
+  if (!isModern && panel) {
     const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
     if (dropdown) {
       const options = dropdown.querySelectorAll(OPTION_SELECTOR);
@@ -178,13 +220,14 @@ async function injectedGetTranscriptInfo() {
     if (match) originalLangIndex = match.index;
   }
 
-  const segmentCount = document.querySelectorAll(SEGMENT_SELECTOR).length;
+  const segSelector = isModern ? NEW_SEGMENT_SELECTOR : OLD_SEGMENT_SELECTOR;
+  const segmentCount = document.querySelectorAll(segSelector).length;
 
   return {
     videoId, title, channel, publishDate, description,
     languages, currentLangName,
     originalLangCode, originalLangName, originalLangIndex,
-    segmentCount,
+    segmentCount, isModern,
   };
 }
 
@@ -194,9 +237,12 @@ async function injectedGetTranscriptInfo() {
  * @param {object} meta - 動画メタデータ
  */
 async function injectedFetchTranscript(languageIndex, meta) {
-  const PANEL_SELECTOR =
+  const OLD_PANEL_SELECTOR =
     'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]';
-  const SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
+  const NEW_PANEL_SELECTOR =
+    'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]';
+  const OLD_SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
+  const NEW_SEGMENT_SELECTOR = 'transcript-segment-view-model';
   const DROPDOWN_SELECTOR = 'yt-dropdown-menu';
   const OPTION_SELECTOR = 'tp-yt-paper-item[role="option"]';
 
@@ -211,8 +257,13 @@ async function injectedFetchTranscript(languageIndex, meta) {
     });
   }
 
-  // 言語切り替え
-  if (languageIndex !== undefined && languageIndex !== null) {
+  // 新旧どちらのパネルが展開されているか判定
+  const isModern = meta && meta.isModern;
+  const PANEL_SELECTOR = isModern ? NEW_PANEL_SELECTOR : OLD_PANEL_SELECTOR;
+  const SEGMENT_SELECTOR = isModern ? NEW_SEGMENT_SELECTOR : OLD_SEGMENT_SELECTOR;
+
+  // 言語切り替え（旧パネルのみ）
+  if (!isModern && languageIndex !== undefined && languageIndex !== null) {
     const panel = document.querySelector(PANEL_SELECTOR);
     if (panel) {
       const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
@@ -227,14 +278,23 @@ async function injectedFetchTranscript(languageIndex, meta) {
     }
   }
 
-  // セグメント読み取り
+  // セグメント読み取り（新旧セレクタ対応）
   const segments = [];
   document.querySelectorAll(SEGMENT_SELECTOR).forEach(seg => {
-    const timeEl = seg.querySelector('.segment-timestamp');
-    const textEl = seg.querySelector('.segment-text');
-    if (!timeEl || !textEl) return;
-    const timeStr = timeEl.textContent.trim();
-    const text = textEl.textContent.trim().replace(/\n/g, ' ');
+    let timeStr, text;
+    if (isModern) {
+      const timeEl = seg.querySelector('.ytwTranscriptSegmentViewModelTimestamp');
+      const textEl = seg.querySelector('span.yt-core-attributed-string');
+      if (!timeEl || !textEl) return;
+      timeStr = timeEl.textContent.trim();
+      text = textEl.textContent.trim().replace(/\n/g, ' ');
+    } else {
+      const timeEl = seg.querySelector('.segment-timestamp');
+      const textEl = seg.querySelector('.segment-text');
+      if (!timeEl || !textEl) return;
+      timeStr = timeEl.textContent.trim();
+      text = textEl.textContent.trim().replace(/\n/g, ' ');
+    }
     const parts = timeStr.split(':').map(Number);
     let seconds = 0;
     if (parts.length === 3) seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
@@ -248,13 +308,27 @@ async function injectedFetchTranscript(languageIndex, meta) {
 
   // 現在の言語
   let currentLang = '不明';
-  const panel = document.querySelector(PANEL_SELECTOR);
-  if (panel) {
-    const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
-    if (dropdown) {
-      const label = dropdown.querySelector('#label');
-      if (label) currentLang = label.textContent.trim();
+  if (!isModern) {
+    const panel = document.querySelector(PANEL_SELECTOR);
+    if (panel) {
+      const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
+      if (dropdown) {
+        const label = dropdown.querySelector('#label');
+        if (label) currentLang = label.textContent.trim();
+      }
     }
+  } else {
+    // 新パネルにはドロップダウンがないため、playerResponseから言語名を取得
+    try {
+      const player = document.querySelector('#movie_player');
+      if (player && player.getPlayerResponse) {
+        const pr = player.getPlayerResponse();
+        const tracks = pr.captions.playerCaptionsTracklistRenderer.captionTracks || [];
+        if (tracks.length > 0) {
+          currentLang = tracks[0].name ? tracks[0].name.simpleText : tracks[0].languageCode;
+        }
+      }
+    } catch (e) { /* ignore */ }
   }
 
   // Markdown 生成
