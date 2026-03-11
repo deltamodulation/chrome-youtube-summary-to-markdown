@@ -59,11 +59,13 @@ popup.js  ──(message)──>  background.js  ──(executeScript)──>  Y
 
 ### 字幕取得方式
 
-YouTube の字幕パネル（トランスクリプト）をDOMスクレイピングで取得します。
+YouTube の字幕パネル（トランスクリプト）をDOMスクレイピングで取得します。新旧2種類のパネルに対応しています。
 
 - `chrome.scripting.executeScript` で動画ページにスクリプトを動的注入
-- `world: 'MAIN'` でページコンテキストにアクセスし、`ytInitialPlayerResponse` から言語情報を取得
-- 字幕パネルのボタンをクリックして開き、`ytd-transcript-segment-renderer` からセグメントを読み取り
+- `world: 'MAIN'` でページコンテキストにアクセスし、`movie_player.getPlayerResponse()` から言語情報を取得（SPA遷移対応）。取得できない場合は `ytInitialPlayerResponse` をフォールバックとして使用
+- 字幕パネルのボタンをクリックして開き、セグメントを読み取り
+  - 旧パネル: `ytd-transcript-segment-renderer` セレクタを使用
+  - 新パネル（Modern Transcript Panel）: `transcript-segment-view-model` セレクタを使用
 
 ### 元言語の検出ロジック
 
@@ -85,7 +87,6 @@ YouTube の字幕パネル（トランスクリプト）をDOMスクレイピン
 extension/
 ├── manifest.json          # Manifest V3 設定
 ├── background.js          # Service Worker（字幕取得ロジック）
-├── content.js             # (未使用・レガシー)
 ├── popup/
 │   ├── popup.html         # ポップアップUI
 │   ├── popup.js           # ポップアップロジック
@@ -107,6 +108,7 @@ extension/
 - 字幕（トランスクリプト）が存在しない動画では取得できません
 - YouTube のDOM構造変更により動作しなくなる可能性があります
 - YouTube動画ページ（`youtube.com/watch`）でのみ動作します
+- Modern Transcript Panel（新パネル）では字幕言語の切り替えができません
 
 ## ライセンス
 

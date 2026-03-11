@@ -170,8 +170,26 @@ async function injectedGetTranscriptInfo() {
 
   {
     const ariaLabels = [
-      '文字起こしを表示', 'Show transcript',
-      'Transkript anzeigen', 'Afficher la transcription', 'Mostrar transcripción',
+      '文字起こしを表示',           // ja
+      'Show transcript',            // en
+      'Transkript anzeigen',        // de
+      'Afficher la transcription',  // fr
+      'Mostrar transcripción',      // es
+      'Mostrar transcrição',        // pt
+      'Mostra trascrizione',        // it
+      '스크립트 표시',                // ko
+      '显示转录稿',                   // zh-CN
+      '顯示逐字稿',                   // zh-TW
+      'Показать расшифровку видео', // ru
+      'Transcript weergeven',       // nl
+      'Pokaż transkrypcję',        // pl
+      'Altyazıları göster',         // tr
+      'Tampilkan transkrip',        // id
+      'عرض النص',                    // ar
+      'ट्रांसक्रिप्ट दिखाएं',             // hi
+      'แสดงข้อความอัตโนมัติ',          // th
+      'Hiện bản chép lời',          // vi
+      'Visa transkription',         // sv
     ];
     let clicked = false;
     for (const label of ariaLabels) {
@@ -333,8 +351,12 @@ async function injectedFetchTranscript(languageIndex, meta) {
 
   // Markdown 生成
   function fmt(sec) {
-    const m = Math.floor(sec / 60);
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
     const s = Math.floor(sec % 60);
+    if (h > 0) {
+      return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
 
