@@ -4,19 +4,22 @@
  * 字幕パネルのDOMスクレイピング結果を返す
  */
 
+// --- 新旧パネル対応セレクタ（一元管理） ---
+// executeScript の args 経由で注入関数に渡す
+const SELECTORS = {
+  OLD_PANEL:   'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]',
+  NEW_PANEL:   'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]',
+  OLD_SEGMENT: 'ytd-transcript-segment-renderer',
+  NEW_SEGMENT: 'transcript-segment-view-model',
+  DROPDOWN:    'yt-dropdown-menu',
+  OPTION:      'tp-yt-paper-item[role="option"]',
+};
+
 /**
  * タブ内で実行: 字幕パネルを開き、メタデータ・言語一覧を取得
+ * @param {object} S - セレクタ定数（SELECTORS）
  */
-async function injectedGetTranscriptInfo() {
-  // --- 新旧パネル対応セレクタ ---
-  const OLD_PANEL_SELECTOR =
-    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]';
-  const NEW_PANEL_SELECTOR =
-    'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]';
-  const OLD_SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
-  const NEW_SEGMENT_SELECTOR = 'transcript-segment-view-model';
-  const DROPDOWN_SELECTOR = 'yt-dropdown-menu';
-  const OPTION_SELECTOR = 'tp-yt-paper-item[role="option"]';
+async function injectedGetTranscriptInfo(S) {
 
   function waitForElement(selector, timeout = 5000) {
     return new Promise((resolve) => {
@@ -32,29 +35,29 @@ async function injectedGetTranscriptInfo() {
   // 新旧いずれかのセグメントが出現するまで待つ
   function waitForSegments(timeout = 5000) {
     return new Promise((resolve) => {
-      if (document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)) {
+      if (document.querySelector(S.OLD_SEGMENT) || document.querySelector(S.NEW_SEGMENT)) {
         resolve(true); return;
       }
       const observer = new MutationObserver(() => {
-        if (document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)) {
+        if (document.querySelector(S.OLD_SEGMENT) || document.querySelector(S.NEW_SEGMENT)) {
           observer.disconnect(); resolve(true);
         }
       });
       observer.observe(document.body, { childList: true, subtree: true });
       setTimeout(() => {
         observer.disconnect();
-        resolve(!!(document.querySelector(OLD_SEGMENT_SELECTOR) || document.querySelector(NEW_SEGMENT_SELECTOR)));
+        resolve(!!(document.querySelector(S.OLD_SEGMENT) || document.querySelector(S.NEW_SEGMENT)));
       }, timeout);
     });
   }
 
   // どちらのパネルが使われているか判定
   function detectPanel() {
-    const newPanel = document.querySelector(NEW_PANEL_SELECTOR);
+    const newPanel = document.querySelector(S.NEW_PANEL);
     if (newPanel && newPanel.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
       return { panel: newPanel, isModern: true };
     }
-    const oldPanel = document.querySelector(OLD_PANEL_SELECTOR);
+    const oldPanel = document.querySelector(S.OLD_PANEL);
     if (oldPanel && oldPanel.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
       return { panel: oldPanel, isModern: false };
     }
@@ -157,7 +160,7 @@ async function injectedGetTranscriptInfo() {
 
   // --- 字幕パネルを開く（SPA遷移対策: 前の動画のパネルが残っている場合は閉じて開き直す） ---
   // 新旧いずれかの開いているパネルを閉じる
-  for (const sel of [NEW_PANEL_SELECTOR, OLD_PANEL_SELECTOR]) {
+  for (const sel of [S.NEW_PANEL, S.OLD_PANEL]) {
     const p = document.querySelector(sel);
     if (p && p.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
       const closeBtn = p.querySelector('#visibility-button button, button[aria-label="閉じる"], button[aria-label="Close"]');
@@ -219,9 +222,9 @@ async function injectedGetTranscriptInfo() {
   const languages = [];
   let currentLangName = '';
   if (!isModern && panel) {
-    const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
+    const dropdown = panel.querySelector(S.DROPDOWN);
     if (dropdown) {
-      const options = dropdown.querySelectorAll(OPTION_SELECTOR);
+      const options = dropdown.querySelectorAll(S.OPTION);
       const currentLabel = dropdown.querySelector('#label');
       currentLangName = currentLabel ? currentLabel.textContent.trim() : '';
       options.forEach((option, index) => {
@@ -238,7 +241,7 @@ async function injectedGetTranscriptInfo() {
     if (match) originalLangIndex = match.index;
   }
 
-  const segSelector = isModern ? NEW_SEGMENT_SELECTOR : OLD_SEGMENT_SELECTOR;
+  const segSelector = isModern ? S.NEW_SEGMENT : S.OLD_SEGMENT;
   const segmentCount = document.querySelectorAll(segSelector).length;
 
   return {
@@ -253,16 +256,9 @@ async function injectedGetTranscriptInfo() {
  * タブ内で実行: 字幕セグメントをスクレイピングしてMarkdownに変換
  * @param {number|null} languageIndex
  * @param {object} meta - 動画メタデータ
+ * @param {object} S - セレクタ定数（SELECTORS）
  */
-async function injectedFetchTranscript(languageIndex, meta) {
-  const OLD_PANEL_SELECTOR =
-    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]';
-  const NEW_PANEL_SELECTOR =
-    'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]';
-  const OLD_SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
-  const NEW_SEGMENT_SELECTOR = 'transcript-segment-view-model';
-  const DROPDOWN_SELECTOR = 'yt-dropdown-menu';
-  const OPTION_SELECTOR = 'tp-yt-paper-item[role="option"]';
+async function injectedFetchTranscript(languageIndex, meta, S) {
 
   function waitForElement(selector, timeout = 5000) {
     return new Promise((resolve) => {
@@ -277,16 +273,16 @@ async function injectedFetchTranscript(languageIndex, meta) {
 
   // 新旧どちらのパネルが展開されているか判定
   const isModern = meta && meta.isModern;
-  const PANEL_SELECTOR = isModern ? NEW_PANEL_SELECTOR : OLD_PANEL_SELECTOR;
-  const SEGMENT_SELECTOR = isModern ? NEW_SEGMENT_SELECTOR : OLD_SEGMENT_SELECTOR;
+  const PANEL_SELECTOR = isModern ? S.NEW_PANEL : S.OLD_PANEL;
+  const SEGMENT_SELECTOR = isModern ? S.NEW_SEGMENT : S.OLD_SEGMENT;
 
   // 言語切り替え（旧パネルのみ）
   if (!isModern && languageIndex !== undefined && languageIndex !== null) {
     const panel = document.querySelector(PANEL_SELECTOR);
     if (panel) {
-      const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
+      const dropdown = panel.querySelector(S.DROPDOWN);
       if (dropdown) {
-        const options = dropdown.querySelectorAll(OPTION_SELECTOR);
+        const options = dropdown.querySelectorAll(S.OPTION);
         if (options[languageIndex]) {
           options[languageIndex].click();
           await new Promise(r => setTimeout(r, 2000));
@@ -329,7 +325,7 @@ async function injectedFetchTranscript(languageIndex, meta) {
   if (!isModern) {
     const panel = document.querySelector(PANEL_SELECTOR);
     if (panel) {
-      const dropdown = panel.querySelector(DROPDOWN_SELECTOR);
+      const dropdown = panel.querySelector(S.DROPDOWN);
       if (dropdown) {
         const label = dropdown.querySelector('#label');
         if (label) currentLang = label.textContent.trim();
@@ -400,6 +396,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.scripting.executeScript({
       target: { tabId },
       func: injectedGetTranscriptInfo,
+      args: [SELECTORS],
       world: 'MAIN',
     })
     .then(results => {
@@ -415,7 +412,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.scripting.executeScript({
       target: { tabId },
       func: injectedFetchTranscript,
-      args: [message.languageIndex ?? null, message.meta ?? null],
+      args: [message.languageIndex ?? null, message.meta ?? null, SELECTORS],
       world: 'MAIN',
     })
     .then(results => {
